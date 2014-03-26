@@ -7,7 +7,12 @@ Page {
     property string hostName
     property string portNumber
     property string errorTxt
-
+    property string tagId: 'None'
+    property string pageTitle: 'Channels'
+    ListModel { id: tagsmodel }
+    Component.onCompleted: {
+        loadTags(hostName,portNumber,tagId);
+    }
     SilicaListView {
         id: listView
         ViewPlaceholder {
@@ -25,19 +30,20 @@ Page {
                 onClicked: pageStack.replace(Qt.resolvedUrl("UpcomingRecordings.qml"),{ hostName: hostName, portNumber: portNumber })
             }
         }
-        Component.onCompleted: loadChannels(hostName,portNumber)
+
         ListModel {  id:channels }
         model: channels
         anchors.fill: parent
         header: PageHeader {
-            title: "TV Channels"
+            id: heading
+            title: pageTitle
         }
         delegate: BackgroundItem {
             id: delegate
+
             IconButton{
                 id: iconButton
-                //icon.source: chicon ? chicon : 'tv-icon.png' #this doesn't work with the new API... I need to work out how to get channel icons
-                icon.source: 'tv-icon.png'
+                icon.source: typeof(model.icon_public_url) == "undefined" ? "tv-icon.png" : model.icon_public_url
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.rightMargin: 20
                 icon.scale: 0.5
@@ -57,13 +63,62 @@ Page {
     }
 
 
+    function loadTags(hostName,portNumber,tagId){
+        tagsmodel.clear()
+        var tagReq = new XMLHttpRequest();
+        var tagparams = "table=channeltags&op=get"
+        var url = "http://"+hostName+":"+portNumber+"/tablemgr"
+       tagReq.open("POST",url,true);
+       tagReq.onreadystatechange = function()
+        {
+            if ( tagReq.readyState == tagReq.DONE)
+            {
+                if ( tagReq.status == 200)
+                {
+                    var jsonObject = eval('(' + tagReq.responseText + ')');
+                    if(tagId==='None'){
+                        loadChannels(hostName,portNumber,jsonObject.entries[0].id)
+                        pageTitle=jsonObject.entries[0].name
+                    }
+                    var menuItems = ''
+                    for (var i = 0; i < jsonObject.entries.length; i++) {
+                        if(jsonObject.entries[i].enabled==1){
+                            //console.log(jsonObject.entries[i].name)
+                            tagsmodel.append(jsonObject.entries[i])
 
+                            menuItems = menuItems + 'MenuItem {\ntext: "'+jsonObject.entries[i].name+'";\nonClicked:pageStack.replace(Qt.resolvedUrl("ChannelsPage.qml"),{ hostName: "'+hostName+'", portNumber: "'+portNumber+'", tagId: "'+jsonObject.entries[i].id+'" })\n}\n'
+
+                            if(tagId==jsonObject.entries[i].id){
+                                //console.log('loading channels for tag: '+tagId)
+                                loadChannels(hostName,portNumber,tagId)
+                                pageTitle=jsonObject.entries[i].name
+                            }
+                        }
+                    }
+                    //console.log("got tags")
+                    var qmlText='import QtQuick 2.0;\nimport Sailfish.Silica 1.0;\nPushUpMenu {\nid: tagMenu\n'+menuItems+'\n}'
+                    //console.log(qmlText)
+                    Qt.createQmlObject(qmlText, listView, "tagMenu")
+                }
+                else if (tagReq.status==0) {
+                    errorTxt="Unable to connect to "+url
+                    console.log('tags url wrong')
+                }
+                else {
+                    errorTxt=tagReq.status+": "+tagReq.statusText
+                    console.log('tags error'+tagReq.responseText)
+                }
+            }
+        }
+        tagReq.setRequestHeader("Content-type", "application/x-www-form-urlencoded")
+        tagReq.send(tagparams);
+    }
 
     // this function is included locally, but you can also include separately via a header definition
-   function loadChannels(hostName,portNumber) {
+   function loadChannels(hostName,portNumber,tag) {
        channels.clear();
          var xhr = new XMLHttpRequest();
-       var params = "sort=name&dir=ASC"
+         var params = "sort=number&dir=ASC"
          var url = "http://"+hostName+":"+portNumber+"/api/channel/grid"
         xhr.open("POST",url,true);
         xhr.onreadystatechange = function()
@@ -73,7 +128,15 @@ Page {
                  if ( xhr.status == 200)
                  {
                      var jsonObject = eval('(' + xhr.responseText + ')');
-                     channels.append(jsonObject.entries)
+                     jsonObject.entries.sort(function(a, b){
+                         return a.number-b.number
+                        })
+                     for (var i = 0; i < jsonObject.entries.length; i++) {
+                         if(jsonObject.entries[i].tags.join(" ").indexOf(tag)>=0){
+                             channels.append(jsonObject.entries[i])
+                             //console.log(i+": "+jsonObject.entries[i].name)
+                         }
+                     }
                  }
                  else if (xhr.status==0) {
                      errorTxt="Unable to connect to "+url
